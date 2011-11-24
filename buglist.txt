@@ -1,7 +1,5 @@
 MAJOR BUGS:
-        SVN DIED.
-        Why can't I commit from Xcode?
-	Can I edit from terminal in Mac? -test.
+	SVN Died.
 
 MINOR BUGS:
 -expected double args treated as 0 when not proper double.
@@ -9,3 +7,5 @@ MINOR BUGS:
 -Position::calcAngle() not returning favourable values.
 
 PROBLEMS:
+	Git + Xcode. =(
+	Git on terminal.. now I remember why I use SVN
