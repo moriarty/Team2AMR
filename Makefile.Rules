@@ -1,0 +1,425 @@
+# -*- mode: makefile -*-
+
+#
+# OS specific fine-tuning
+#
+ifeq ($(OSTYPE),MACOSX)
+BOOST_INC := -isystem /opt/local/include
+PLAYER_CXXFLAGS := $(patsubst -I/%,-isystem /%,$(shell pkg-config --cflags playerc++))
+DYEXT := dylib
+else
+BOOST_INC := 
+PLAYER_CXXFLAGS := $(patsubst -I/%,-isystem /%,$(shell pkg-config --cflags playerc++))
+DYEXT := so
+endif
+LNKEXT := a
+
+#
+#  Default library type  (link lib)
+#
+DEF_LIBEXT := $(LNKEXT)
+
+#
+# Default architecture (empty = host architecture)
+#
+DEF_ARCH := 
+
+#
+# Here starts the magic.  Touch and burn at your own risk.
+#
+
+#
+# generic compiler and linker flags
+#
+CXX = g++
+CXXFLAGS = -Wall -g $(PLAYER_CXXFLAGS)  $(BOOST_INC) -O0  -Iinclude -I../include -Ilib -I../lib  $(EXT_CXXFLAGS)
+LDFLAGS = -g `pkg-config --libs playerc++`  $(BOOST_LIB)  $(EXT_LDFLAGS)
+
+#
+# known architectures
+#
+ARCH_EXTRA_x86_64 := -march=x86-64 -m64 -fPIC
+ARCH_EXTRA_i386 := -march=-386 -m32
+ARCH_EXTRA_HOST := 
+
+
+#
+# all generated library files of all architectures
+#
+# (filled in by the lib_tpl below)
+ALL_LIBS_CLEAN_LIST :=
+
+.PHONY: all libs
+
+all: $(ALL_EXE)
+
+libs: $(patsubst %,%-lib,$(ALL_LIBS))
+
+
+build/%/.dir:
+	@mkdir -pv $(dir $@)
+	@touch $@
+
+
+# compile single source file into object file.
+# instanciated once for each source directory of each toplevel target.
+#
+# build-dir-base src-dir target-name
+# build-dir-base = target-specific build dir, optionally with architecture suffix
+# src-dir = main source directory
+# target-name = toplevel target we are building
+define obj_tpl
+
+build/$(1)/%.o: $(2)%.cc build/$(1)/.dir Makefile
+	$(CXX) $(CXXFLAGS) $$($(1)_CFLAGS) $$(addprefix -I,$$($(3)_INC)) -MMD -o $$@ -c $$<
+
+build/$(1)/%.o: $(2)%.cpp build/$(1)/.dir Makefile
+	$(CXX) $(CXXFLAGS) $$($(1)_CFLAGS) $$(addprefix -I,$$($(3)_INC)) -MMD -o $$@ -c $$<
+
+#
+endef
+
+
+# architecture-dependent variant of obj_tpl
+#
+# build-dir-base src-dir target-name arch
+# build-dir-base = target-specific build dir
+# src-dir = main source directory
+# target-name = toplevel target we are building
+# arch = architecture we are cross-compiling for.  must be defined in
+#        "known architecture" section above
+define obj_arch_tpl
+
+ifneq ($(ARCH_EXTRA_$(4))x,x)
+ifeq ($($(1)_$(4)_CFLAGS)x,x)
+$(1)_$(4)_CFLAGS = $($(1)_CFLAGS) $(ARCH_EXTRA_$(4))
+endif
+ifeq ($($(1)_$(4)_LDFLAGS)x,x)
+$(1)_$(4)_LDFLAGS = $($(1)_LDFLAGS) $(ARCH_EXTRA_$(4))
+endif
+ifeq ($($(1)_$(4)_LDFLAGS_LIB)x,x)
+$(1)_$(4)_LDFLAGS_LIB = $($(1)_LDFLAGS_LIB) $(ARCH_EXTRA_$(4))
+endif
+$(call obj_tpl,$(1)_$(4),$(2),$(3))
+endif
+
+#
+endef
+
+# create a doxygen configuration file for a toplevel target
+#
+# target-name = toplevel target we are building
+define doxy_tpl
+$(1).doxyconf: Makefile build/$(1).dep
+	@tr " " "\n" <build/$(1).dep | grep -e '\.cpp$$$$' -e '\.cc$$$$' -e '\.h$$$$' -e '\.hpp$$$$' >$$@.t
+	@echo $(wildcard *.dox) >>$$@.t
+ifneq ($$($(1)_DOX)x,x)
+	@echo "including extra documentation from $(1)_DOX : $$($(1)_DOX)"
+	@echo $$($(1)_DOX) >>$$@.t
+endif
+ifneq ($$($(1)_DOXDIR)x,x)
+	@echo "including extra documentation in $$($(1)_DOXDIR) : $$(foreach i,$$($(1)_DOXDIR), $$(wildcard $$(i)/*.dox)"
+	@echo $$(foreach i,$$($(1)_DOXDIR), $$(wildcard $$(i)/*.dox) >>$$@.t
+endif
+	@doxygen -s -g $$@.t2 2>/dev/null >/dev/null
+	@grep -v -e '^INPUT[^A-Z]*=' -e 'OUTPUT_DIRECTORY[^A-Z]*=' -e 'EXTRACT_ALL[^A-Z]*=' -e '^WARN_LOGFILE' -e '^INCLUDE_PATH[^A-Z]*=' <$$@.t2 >$$@
+ifeq ($(DOXY_INPUT)x,x)
+	@echo 'INPUT = \\' >>$$@
+	@sort -u <$$@.t | tr "\n" " " >>$$@
+	@echo >>$$@
+else
+	@echo 'INPUT = $(DOXY_INPUT)'  >>$$@
+	@echo 'SEARCH_INCLUDES = NO' >>$$@
+endif
+	@echo 'INCLUDE_PATH = $($(1)_INC)' >>$$@
+	@echo 'OUTPUT_DIRECTORY = doc-$(1)-files' >>$$@
+	@echo 'EXTRACT_ALL = YES' >>$$@
+	@echo 'JAVADOC_AUTOBRIEF = YES' >>$$@
+	@echo 'WARN_LOGFILE = $(1).doxylog' >>$$@
+	@echo 'SORT_MEMBERS_CTORS_1ST = YES' >>$$@
+	@echo 'SHOW_DIRECTORIES = YES' >>$$@
+	@echo 'HAVE_DOT = $(HAS_DOT)' >>$$@
+	@echo 'PROJECT_NAME = $(1)' >>$$@
+	@echo 'ALIASES += "fb_hint=\xrefitem hint \"Hints\" \"Things to keep in mind for next homeworks\" "' >>$$@
+	@echo 'ALIASES += "fb_fix=\xrefitem fixit \"Things to fix\" \"Things to fix until next submission\" "' >>$$@
+ifeq ($(DOXY_CALLGRAPHS),YES)
+	@echo 'CALL_GRAPH = YES' >>$$@
+	@echo 'CALLER_GRAPH = YES' >>$$@
+endif
+ifeq ($(DOXY_ALLRELATIONS),YES)
+	@echo 'TEMPLATE_RELATIONS = YES' >>$$@
+	@echo 'REFERENCED_BY_RELATION = YES' >>$$@
+	@echo 'REFERENCES_RELATION = YES' >>$$@
+	@echo 'BUILTIN_STL_SUPPORT = YES' >>$$@
+endif
+ifeq ($(DOXY_INTPRIV),YES)
+	@echo 'INTERNAL_DOCS = YES' >>$$@
+	@echo 'EXTRACT_LOCAL_METHODS = YES' >>$$@
+endif
+	@echo 'EXTRACT_STATIC = YES' >>$$@
+	@echo 'EXTRACT_PRIVATE = YES' >>$$@
+ifeq ($(DOXY_WARNPARAM),YES)
+	@echo 'WARN_NO_PARAMDOC = YES' >>$$@
+endif
+ifneq ($(DOXY_EXTRA_FLAGS)x,x)
+	@echo '$(DOXY_EXTRA_FLAGS)' | tr "%" "\n" >>$$@
+endif
+	@rm $$@.t $$@.t2
+	@mkdir -pv doc-$(1)-files
+
+.PHONY: doc-$(1)-reconf doc-$(1)-PDF
+
+doc-$(1) doc-$(1)-files/latex/Makefile: $(1).doxyconf $($(1)_CC)
+	doxygen $(1).doxyconf
+
+doc-$(1)-PDF: doc-$(1)-files/latex/Makefile
+	$(MAKE) -C doc-$(1)-files/latex
+	$(MAKE) -C doc-$(1)-files/latex
+
+doc-$(1)-reconf:
+	rm  $(1).doxyconf
+	$(MAKE) doc-$(1)
+
+endef
+
+# compute source files (incl. path) and link libraries for toplevel target.
+#
+# target-name = toplevel target we are building
+define exe_src_tpl
+
+$(1)_SRCDIRS := $(strip $(filter-out ./,$(sort $(dir $($(1)_CC)))))
+$(1)_LIBS_PATH_1 = $(foreach i,$($(1)_LIBS), $(i) libraries/$(i) ../libraries/$(i))
+$(1)_LIBS_PATH_2 = $(foreach i,$($(1)_LIBS), $(wildcard $(i) libraries/$(i) ../libraries/$(i)))
+$(1)_LIBS_PATH := $(foreach i,$($(1)_LIBS), $(firstword $(wildcard $(i) libraries/$(i) ../libraries/$(i)) $(i)))
+
+#
+endef
+
+# build an executable
+#
+# - computes all object file name
+# - decide which architectures to build  (not implemented, always builds host architecture)
+# - instanciates obj_tpl for all source directory of the target
+# - creates rule to update toplevel target dependency file
+# - instanciates doxy_tpl
+# - creates clean and help target for toplevel target
+#
+# target-name = toplevel target we are building
+define exe_tpl
+$(1)_OBJ := $$(addprefix build/$(1),$$(patsubst %.cc,/%.o,$$(patsubst %.cpp,%.cc,$$(notdir $($(1)_CC)))))
+
+$(1): $$($(1)_OBJ) $$($(1)_LIBS_PATH)
+ifneq ($($(1)_LIBS)x,x)
+	@echo "libs candidate names = "   $$($(1)_LIBS_PATH_1)
+	@echo "libs found = "   $$($(1)_LIBS_PATH_2)
+	@echo "libs used  = "   $$($(1)_LIBS_PATH)
+endif
+	$(CXX)  $(LDFLAGS) -o $$@ $$^
+
+$(call obj_tpl,$(1),,$(1))
+
+ifneq ($($(1)_SRCDIRS)x,x)
+$(foreach i,$($(1)_SRCDIRS),$(call obj_tpl,$(1),$(i),$(1)))
+endif
+
+# update dependency file for toplevel target
+#
+# target-name = toplevel target we are building
+build/$(1).dep: build/$(1)/.dir $$(wildcard $$(patsubst %.o,%.d,$$($(1)_OBJ)))
+	@cat $$^ >$$@
+
+-include build/$(1).dep
+
+$(call doxy_tpl,$(1))
+
+clean-$(1):
+	rm -f $(1) build/$(1)/*.o build/$(1)/*.d $(1).doxyconf
+	rm -f doc-$(1)-files/*/*
+	rmdir doc-$(1)-files/* doc-$(1)-files || true
+
+help-$(1):
+	@echo "Target $(1):"
+	@echo "  make $(1)        : build target"
+	@echo "  make clean-$(1)  : remove generated files"
+	@echo "  make doc-$(1)    : run doxygen on target's source files"
+	@echo "           : documentation wil be generated in doc-$(1)-files"
+	@echo
+
+.PHONY: clean-$(1) help-$(1) doc-$(1)
+
+endef
+
+
+# compute library sources incl. path
+#
+# target-name = toplevel target we are building
+define lib_src_tpl
+$(1)_SRCDIRS := $(strip $(filter-out ./,$(sort $(dir $($(2)_LIB_CC)))))
+endef
+
+
+# build a library, architecture-dependent
+#
+# this works similar to exe_tpl, it computes object file names,
+# creates link rules and instanciates obj_arch_tpl for all source
+# directories of the toplevel target.
+#
+# build-dir-base target-name arch
+# build-dir-base =  target-specific build dir (usually traget-name with "-lib" suffix)
+# target-name = toplevel target we are building
+# arch = a single architecture we are building
+define lib_arch_tpl
+
+$(1)_$(3)_OBJ := $$(addprefix build/$(1)_$(3),$$(patsubst %.cc,/%.o,$$(patsubst %.cpp,%.cc,$$(notdir $($(2)_LIB_CC)))))
+
+$(2)_$(3)_FILES := $$(foreach i,$$($(2)_LIBEXT),$(2)_$(3).$$(i))
+$(2)_FILES += $$($(2)_$(3)_FILES)
+
+
+$(2)_$(3).a: $$($(1)_$(3)_OBJ)
+	$(AR)  rus $$@ $$^ #$$($(2)_LIB_LIBS)
+
+$(2)_$(3).so:  $$($(1)_$(3)_OBJ)
+	$(CXX) $$($(1)_$(3)_LDFLAGS_LIB) -shared  -o $$@ $$^
+
+$(call obj_arch_tpl,$(1),,$(2),$(3))
+
+ifneq ($($(1)_SRCDIRS)x,x)
+$(foreach i,$($(1)_SRCDIRS),$(call obj_arch_tpl,$(1),$(i),$(2),$(3)))
+endif
+
+#
+endef
+
+# build a library, figure out which architecture support is needed
+#
+# depending on a library's configuration, this either builds a single
+# library for the host architecture, or it cross-builds for all
+# architectures in the library's configuration.
+#
+# - determin architectures to build
+# - instanciate rules for host architecture
+# - instanciate rules for other architectures, if any requested
+# - run build rules for host *or* other architectures.
+#
+# build-dir-base target-name
+# build-dir-base =  target-specific build dir (usually traget-name with "-lib" suffix)
+# target-name = toplevel library target to build
+define lib_tpl
+
+# host object list
+$(1)_OBJ := $$(addprefix build/$(1),$$(patsubst %.cc,/%.o,$$(patsubst %.cpp,%.cc,$$(notdir $$($(2)_LIB_CC)))))
+
+ifeq ($$($(2)_LIBEXT)x,x)
+$(2)_LIBEXT := $(DEF_LIBEXT)
+endif
+
+ifeq ($($(2)_LDFLAGS_LIB)x,x)
+$(2)_LDFLAGS_LIB := $(LDFLAGS_LIB)
+endif
+
+$(2)_LIBFILES := $$(foreach i,$$($(2)_LIBEXT),$(2).$$(i)) $$(foreach j,$$($(2)_ARCH),$$(foreach i,$$($(2)_LIBEXT),$(2)_$$(j).$$(i)))
+
+ifeq ($($(2)_ARCH)x,x)
+# configure only host architecture
+$(2)_FILES := $$(foreach i,$$($(2)_LIBEXT),$(2).$$(i))
+else
+# host architecture not implicitly configured, will explicitly configure architectures later
+$(2)_FILES :=
+endif
+
+ALL_LIBS_CLEAN_LIST += $$($(1)_LIBFILES)
+
+$(1): $$($(1)_LIBFILES)
+
+$(2).a: $$($(1)_OBJ)
+	$(AR)  rus $$@ $$^ #$$($(2)_LIB_LIBS)
+
+$(2).so:  $$($(1)_OBJ)
+	$(CXX) $($(1)_LDFLAGS_LIB) -shared  -o $$@ $$^
+
+$(call obj_tpl,$(1),,$(2))
+
+ifneq ($($(1)_SRCDIRS)x,x)
+$(foreach i,$($(1)_SRCDIRS),$(call obj_tpl,$(1),$(i),$(2)))
+endif
+
+ifneq ($($(2)_ARCH)x,x)
+$(foreach i,$($(2)_ARCH),$(call lib_arch_tpl,$(1),$(2),$(i)))
+endif
+
+build/$(1).dep: build/$(1)/.dir $$(wildcard $$(patsubst %.o,%.d,$$($(1)_OBJ)))
+	@cat $$^ >$$@
+
+-include build/$(1).dep
+
+$(call doxy_tpl,$(1))
+
+
+clean-$(1):
+	rm -f $(2).a build/$(1)/*.o build/$(1)/*.d $(1).doxyconf
+	rm -f doc-$(1)-files/*/*
+	rmdir doc-$(1)-files/* doc-$(1)-files || true
+
+help-$(1):
+	@echo "Target $(1):"
+	@echo "  make $(1)        : build target"
+	@echo "  make clean-$(1)  : remove generated files"
+	@echo "  make doc-$(1)    : run doxygen on target's source files"
+	@echo "           : documentation wil be generated in doc-$(1)-files"
+	@echo
+
+
+.PHONY: clean-$(1) help-$(1) doc-$(1) 
+
+#
+endef
+
+$(foreach exe,$(ALL_EXE),$(eval $(call exe_src_tpl,$(exe))))
+$(foreach exe,$(ALL_EXE),$(eval $(call exe_tpl,$(exe))))
+
+$(foreach exe,$(ALL_LIBS),$(eval $(call lib_src_tpl,$(exe)-lib,$(exe))))
+$(foreach exe,$(ALL_LIBS),$(eval $(call lib_tpl,$(exe)-lib,$(exe))))
+
+
+clean:
+	rm -f $(ALL_EXE) $(ALL_LIBS_CLEAN_LIST) build/*/*.o build/*/*.d *.doxyconf
+
+help: help-intro $(addprefix help-,$(ALL_EXE) $(addsuffix -lib,$(ALL_LIBS)))
+	@echo
+	@echo "  To customize doxygen output, you can set any of these variables "
+	@echo "  to YES: DOXY_CALLGRAPHS, DOXY_ALLRELATIONS, DOXY_INTPRIV "
+	@echo "  and DOXY_WARNPARAM.  This enables the respective output."
+	@echo "  Type 'make help-doc' for an explanation of these variables."
+	@echo "  Example 'make DOXY_CALLGRAPHS=YES doc-...'"
+	@echo
+	@echo "  To pass extra arguments to the compiler, put these i a variabe"
+	@echo "  <target>_CFLAGS in the Makefile or on the command line. Example:"
+	@echo "  make player_CFLAGS='-DDEBUG' player"
+	@echo "  Don't mix defining <target>_CFLAGS in the Makefile and on the"
+	@echo "  command line. The result is undefined."
+	@echo "  To pass extra flags to the compiler for all targets, use instead "
+	@echo "  the varaiable EXT_CXXFLAGS on the command line.  Don't use"
+	@echo "  EXT_CXXFLAGS in the Makefile!"
+	@echo
+	@echo "Done"
+
+help-intro:
+	@echo "Special targets:"
+	@echo "  make help  : this list"
+	@echo "  make clean : remove all generated files"
+	@echo
+
+help-doc:
+	@echo "Doxygen customization"
+	@echo "  DOXY_CALLGRAPHS : enables call graphs showing for each funtion, which other functions are called, and from which functions it is called."
+	@echo "  DOXY_ALLRELATIONS : shows usage relations for member variables, show STL template types."
+	@echo "  DOXY_INTPRIV : extract functions and variables marked as 'internal' or as 'private'.  Required to see private members in classes."
+	@echo "  DOXY_WARNPARAM : Issue a warning for each function parameter not documented." 
+	@echo
+	@echo "  For call graphs and relations, you need to have the 'dot' tool "
+	@echo "  installed and the 'HAS_DOT' variable in the Makefile set to YES."
+	@echo "  The 'dot' tool usually comes in the 'graphviz' package."
+	@echo
+
+.PHONY: clean help help-intro help-doc

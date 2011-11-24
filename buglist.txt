@@ -1,0 +1,8 @@
+MAJOR BUGS:
+
+MINOR BUGS:
+-expected double args treated as 0 when not proper double.
+        what? -alex
+-Position::calcAngle() not returning favourable values.
+
+PROBLEMS:
