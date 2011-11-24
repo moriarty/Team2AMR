@@ -8,5 +8,4 @@ MINOR BUGS:
 
 PROBLEMS:
 	Git + Xcode. =(
-	Git on terminal.. now I remember why I use SVN
-	I'm showing Jacob.
+	Git on terminal.. 
