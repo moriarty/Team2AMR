@@ -8,4 +8,4 @@ MINOR BUGS:
 
 PROBLEMS:
 	Git + Xcode. =(
-	Git on terminal.. 
+	Git is annoying.
