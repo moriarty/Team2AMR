@@ -1,4 +1,6 @@
 MAJOR BUGS:
+        SVN DIED.
+        Why can't I commit from Xcode?
 
 MINOR BUGS:
 -expected double args treated as 0 when not proper double.
